@@ -2,6 +2,7 @@ package com.moomatechnica.qmkremap
 
 import android.annotation.SuppressLint
 import android.os.Bundle
+import android.view.ViewGroup
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
@@ -42,6 +43,10 @@ private fun UseviaWebView(modifier: Modifier = Modifier) {
         modifier = modifier.fillMaxSize(),
         factory = { context ->
             WebView(context).apply {
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 webViewClient = WebViewClient()

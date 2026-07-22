@@ -4,15 +4,16 @@
 
 各タスクは検証可能な小さい単位。1タスクずつ実装・検証してから次に進む。
 
-- [ ] **T0. 前提検証**: 実機WebView（素の状態、ポリフィルなし）で`usevia.app`を開き、モバイルUAでブロックされないか確認する。ブロックされる場合はデスクトップUA偽装タスクをここに追加する
-  - **要実機検証・本セッションでは未実施**（adb接続済みの実機なし、`/dev/kvm`不在でエミュレータも起動不可のため）。
-  - 実機検証手順: Android実機をUSBデバッグ有効化のうえPCに接続し `adb devices` で認識確認 → `./gradlew installDebug` でT1のAPKを実機にインストール → アプリを起動しWebViewで`https://usevia.app/`が表示された状態で、ページが「モバイル端末非対応」等の警告でブロックされていないか目視確認する。ブロックされていた場合は`WebView.getSettings().setUserAgentString()`でデスクトップUAに差し替えるタスクを本ファイルに追加する。
+- [x] **T0. 前提検証**: 実機WebView（素の状態、ポリフィルなし）で`usevia.app`を開き、モバイルUAでブロックされないか確認する。ブロックされる場合はデスクトップUA偽装タスクをここに追加する
+  - **検証済み（実機Pixel 3、Android 12、WebView 150.0.7871.46、2026-07-22実施）**: `usevia.app`はUser-Agent文字列によるモバイル判定ブロックを**行っていない**。実際には`navigator.hid`の有無によるフィーチャー検出で、未対応時は「USB Detection Error — Right now, we only support browsers that have WebHID enabled」という案内エラーを表示するだけ（Chrome mobile・自作WebViewアプリの両方で同じ挙動を確認）。
+  - **結論: デスクトップUA偽装は不要**。`navigator.hid`ポリフィルさえ正しく注入できれば、usevia.app側の追加対応なしにフィーチャー検出を通過できる見込み。
 - [x] **T1. プロジェクト雛形**: Android Studioプロジェクト作成（Kotlin, Compose, minSdk 26, `androidx.webkit`依存追加）。空のWebViewで`usevia.app`を表示できることを確認（この時点ではWebHID未対応でVIA側は接続不可なのが期待挙動）
-  - **検証済み（本セッションで実施）**: `JAVA_HOME=/opt/android-studio/jbr ./gradlew assembleDebug` がBUILD SUCCESSFULで完走し、`app/build/outputs/apk/debug/app-debug.apk`を生成することを確認した。
+  - **検証済み（本セッションで実施、実機Pixel 3で最終確認2026-07-22）**: `JAVA_HOME=/opt/android-studio/jbr ./gradlew assembleDebug` がBUILD SUCCESSFULで完走し、`app/build/outputs/apk/debug/app-debug.apk`を生成することを確認した。
   - 中身は`MainActivity`(Compose) + `AndroidView`でラップした`WebView`が`https://usevia.app/`を`loadUrl`するだけの最小構成（`app/src/main/java/com/moomatechnica/qmkremap/MainActivity.kt`）。ポリフィル注入・USB結線は未実装（意図通り、T2以降で追加）。
-  - 「WebViewがusevia.appを実際に表示できるか」「WebHID未対応の挙動になるか」は目視確認が必要なため、これは実機検証待ち（T0の実機検証と合わせて確認できる）。
+  - **実機検証で発見・修正した不具合**: 実機にインストールして初めて判明したが、`AndroidView`のfactory内で生成した`WebView`に`layoutParams`を明示的に設定していないと、`usevia.app`のJS自体は実行される（logcatにコンソールログが出る）にもかかわらず**画面には何も描画されずComposeの`Surface`背景色だけが表示され続ける**という不具合があった。`WebView(context).apply { layoutParams = ViewGroup.LayoutParams(MATCH_PARENT, MATCH_PARENT); ... }`を明示的に設定することで解消。Compose`AndroidView`にWebViewなど独自の測定・レイアウトロジックを持つViewを载せる際の既知の落とし穴で、Gradleビルドやユニットテストでは検出できず実機での目視確認で初めて発覚した。今後Compose+WebViewを扱う箇所では常にlayoutParamsを明示することを徹底する。
+  - この修正後、実機で`usevia.app`が正しく表示され、T0と同じ「USB Detection Error」画面（フィーチャー検出によるもの）が表示されることを確認した。
 - [ ] **T2. USB権限・デバイス列挙**: `UsbManager`でUSB接続キーボードを検出し、`PendingIntent`+`BroadcastReceiver`でパーミッションダイアログを表示・許可を受け取る。ログで許可済みデバイス情報が取れることを確認
-  - **要実機検証・本セッションでは未実施**（USB OTG接続の実機キーボードもadb接続済み実機もないため、`UsbManager`との実通信は原理的に検証不可）。コードは未着手（T4の`claimInterface`と合わせて実装した方が効率的なため）。
+  - **要実機検証・本セッションでは未実施**（adb接続済み実機〔Pixel 3〕は用意できたが、USB OTG経由の実機QMK/Viaキーボード接続がまだ無いため、`UsbManager`との実通信は検証不可）。コードは未着手（T4の`claimInterface`と合わせて実装した方が効率的なため）。
   - 実機検証手順: USB OTGケーブル経由でQMK/Viaキーボードを実機Androidに接続 → アプリ起動（またはUSB_DEVICE_ATTACHEDインテントフィルタ経由での自動起動を実装した場合はそれをトリガーに）→ `UsbManager.deviceList`にキーボードが列挙されることをログ出力で確認 → `PendingIntent`+`BroadcastReceiver`によるパーミッションダイアログが表示され、許可後に`UsbManager.hasPermission(device)`が`true`になることを`adb logcat`で確認する。
 - [x] **T3. HIDレポートディスクリプタ取得・パーサー**: `controlTransfer()`でGET_DESCRIPTOR(type=0x22)を取得し、Usage Page/Usageを抽出するパーサーを実装。既知のQMK Raw HIDディスクリプタのバイト列を使ったユニットテストで`0xFF60`/`0x61`のインターフェースを正しく特定できることを確認
   - **検証済み（本セッションで実施）**: `HidReportDescriptorParser`（`app/src/main/java/com/moomatechnica/qmkremap/hid/HidReportDescriptorParser.kt`）と`RawHidInterfaceLocator`（同ディレクトリの`RawHidInterfaceLocator.kt`）を実装。QMKのRaw HIDディスクリプタ（`raw_hid.h`のUsage Page`0xFF60`/Usage`0x61`固定、RAW_EPSIZE=32を再現したバイト列）に加え、Boot Keyboard・Consumer Control・LEDのネストCollectionを持つディスクリプタなど既知のバイト列を使ったJUnitテスト（`app/src/test/java/com/moomatechnica/qmkremap/hid/HidReportDescriptorParserTest.kt`、6ケース）を追加し、`JAVA_HOME=/opt/android-studio/jbr ./gradlew test`が**6 tests, 0 failures**で成功することを確認した。
