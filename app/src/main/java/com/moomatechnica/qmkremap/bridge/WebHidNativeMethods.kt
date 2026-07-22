@@ -6,11 +6,11 @@ import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
 import android.util.Log
-import com.moomatechnica.qmkremap.device.DeviceSelectionPolicy
-import com.moomatechnica.qmkremap.device.UsbHidDeviceInfo
-import com.moomatechnica.qmkremap.hid.RawHidInterfaceLocator
-import com.moomatechnica.qmkremap.usb.UsbHidReportIo
-import com.moomatechnica.qmkremap.usb.UsbHidTransport
+import com.moomatechnica.qmkusbhid.device.DeviceSelectionPolicy
+import com.moomatechnica.qmkusbhid.device.UsbHidDeviceInfo
+import com.moomatechnica.qmkusbhid.hid.RawHidInterfaceLocator
+import com.moomatechnica.qmkusbhid.usb.UsbHidReportIo
+import com.moomatechnica.qmkusbhid.usb.UsbHidTransport
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 

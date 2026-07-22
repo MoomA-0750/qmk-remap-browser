@@ -31,8 +31,8 @@ import androidx.webkit.WebViewFeature
 import com.moomatechnica.qmkremap.bridge.WebHidBridge
 import com.moomatechnica.qmkremap.bridge.WebHidNativeMethods
 import com.moomatechnica.qmkremap.bridge.WebHidRpcRouter
-import com.moomatechnica.qmkremap.device.UsbHidDeviceInfo
-import com.moomatechnica.qmkremap.usb.UsbHidTransport
+import com.moomatechnica.qmkusbhid.device.UsbHidDeviceInfo
+import com.moomatechnica.qmkusbhid.usb.UsbHidTransport
 
 /**
  * T8: usevia.appを表示し、読み込み前に`navigator.hid`ポリフィルを注入するWebView。

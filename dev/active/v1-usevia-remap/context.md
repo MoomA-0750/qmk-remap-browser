@@ -16,6 +16,10 @@ QMKキーボードのAndroidリマップアプリ構想（Vault: `Human/Projects
 - usevia.appのUA判定挙動（T0で検証）
 - HIDレポートディスクリプタからRaw HIDインターフェース（usagePage 0xFF60/usage 0x61）を正しく特定できるか（T3で検証、plan.mdの「主要な技術的リスク」参照）
 
+## USB/HID層の切り出し（2026-07-22）
+
+ブラウザ・WebView・Composeに依存しない低レベルUSB/HID通信ロジック（`UsbHidTransport`, `UsbHidReportIo`, `HidReportDescriptorParser`, `RawHidInterfaceLocator`, `UsbHidDeviceInfo`, `DeviceSelectionPolicy`）は、独立したAndroidライブラリリポジトリ [qmk-usb-hid-bridge](~/Documents/git-cloned/qmk-usb-hid-bridge/)（パッケージ`com.moomatechnica.qmkusbhid.*`）に切り出し済み。qmk-remap-browserからはGradle複合ビルド（`settings.gradle.kts`の`includeBuild("../qmk-usb-hid-bridge")` + `app/build.gradle.kts`の`implementation("com.moomatechnica:qmk-usb-hid-bridge:1.0.0")`）で参照している。将来の`qmk-remap-native`もこのライブラリを共有する想定。コードの実体・テストは`qmk-usb-hid-bridge`側にあるため、当該ロジックを修正する際はそちらのリポジトリを編集すること。
+
 ## 参考リンク
 
 - Spec: [spec.md](./spec.md)

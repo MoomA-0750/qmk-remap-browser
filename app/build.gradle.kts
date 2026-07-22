@@ -61,6 +61,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.webkit:webkit:1.11.0")
+    implementation("com.moomatechnica:qmk-usb-hid-bridge:1.0.0")
 
     testImplementation("junit:junit:4.13.2")
 
