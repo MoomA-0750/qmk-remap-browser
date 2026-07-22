@@ -2,66 +2,116 @@ package com.moomatechnica.qmkremap
 
 import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
+import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.view.ViewGroup
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
-import android.hardware.usb.UsbDevice
-import com.moomatechnica.qmkremap.hid.RawHidInterfaceLocator
-import com.moomatechnica.qmkremap.usb.UsbHidReportIo
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
+import com.moomatechnica.qmkremap.bridge.WebHidBridge
+import com.moomatechnica.qmkremap.bridge.WebHidNativeMethods
+import com.moomatechnica.qmkremap.bridge.WebHidRpcRouter
+import com.moomatechnica.qmkremap.device.UsbHidDeviceInfo
 import com.moomatechnica.qmkremap.usb.UsbHidTransport
 
 /**
- * T1: 最小構成。WebViewでusevia.appを表示するだけ。
+ * T8: usevia.appを表示し、読み込み前に`navigator.hid`ポリフィルを注入するWebView。
  *
- * この時点ではnavigator.hidポリフィルを注入していないため、usevia.app側は
- * 「WebHID未対応ブラウザ」として振る舞う（VIA側デバイス接続不可）のが期待挙動。
- * ポリフィル注入・USB Host APIとの結線はT2以降のタスクで追加する。
+ * USB HIDデバイスの許可（T2）・実通信（T4）・JS<->Kotlinブリッジ（T5/T6/T7）は
+ * すべて[WebHidNativeMethods]/[WebHidBridge]に委譲する。
  */
 private const val USEVIA_URL = "https://usevia.app/"
+private const val USEVIA_ORIGIN = "https://usevia.app"
 private const val TAG = "MainActivity"
+
+/** T7: 許可済みHIDデバイスが複数あるときのシンプルな選択ダイアログの状態。 */
+private class DevicePickerState {
+    var candidates by mutableStateOf<List<UsbHidDeviceInfo>?>(null)
+    var onChosen: ((UsbHidDeviceInfo?) -> Unit)? = null
+
+    fun show(candidates: List<UsbHidDeviceInfo>, onChosen: (UsbHidDeviceInfo?) -> Unit) {
+        this.candidates = candidates
+        this.onChosen = onChosen
+    }
+
+    fun resolve(chosen: UsbHidDeviceInfo?) {
+        onChosen?.invoke(chosen)
+        candidates = null
+        onChosen = null
+    }
+}
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var usbHidTransport: UsbHidTransport
     private var usbPermissionReceiver: BroadcastReceiver? = null
+    private val devicePickerState = DevicePickerState()
+
+    // VIAの「Design tab」でのキーボード定義JSONアップロード(<input type=file>)に対応するため、
+    // WebChromeClient.onShowFileChooserからAndroidのファイル選択画面を起動する。
+    private var pendingFileChooserCallback: ValueCallback<Array<Uri>>? = null
+    private val fileChooserLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        val callback = pendingFileChooserCallback
+        pendingFileChooserCallback = null
+        callback?.onReceiveValue(if (uri != null) arrayOf(uri) else null)
+    }
+
+    private fun launchFileChooser(callback: ValueCallback<Array<Uri>>) {
+        pendingFileChooserCallback?.onReceiveValue(null)
+        pendingFileChooserCallback = callback
+        fileChooserLauncher.launch("application/json")
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        usbHidTransport = UsbHidTransport(this)
+
+        lateinit var bridge: WebHidBridge
+        val nativeMethods = WebHidNativeMethods(
+            transport = usbHidTransport,
+            onInputReport = { deviceId, reportId, data -> bridge.sendInputReportEvent(deviceId, reportId, data) },
+            requestDeviceSelection = { candidates, onChosen ->
+                runOnUiThread { devicePickerState.show(candidates, onChosen) }
+            }
+        )
+        bridge = WebHidBridge(WebHidRpcRouter(nativeMethods.asRouterMethods()))
+
+        usbPermissionReceiver = usbHidTransport.registerPermissionReceiver { device, granted ->
+            Log.i(TAG, "USB permission result: device=${device.deviceName} granted=$granted")
+        }
+        for (device in usbHidTransport.connectedDevices()) {
+            if (!usbHidTransport.hasPermission(device)) {
+                usbHidTransport.requestPermission(device)
+            }
+        }
+
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    UseviaWebView()
+                    UseviaWebView(bridge = bridge, onShowFileChooser = ::launchFileChooser)
                 }
-            }
-        }
-
-        // T2: USB HIDデバイスの列挙・パーミッション要求（動作確認用の最小配線）。
-        usbHidTransport = UsbHidTransport(this)
-        usbPermissionReceiver = usbHidTransport.registerPermissionReceiver { device, granted ->
-            Log.i(TAG, "T2 permission callback: device=${device.deviceName} granted=$granted hasPermission=${usbHidTransport.hasPermission(device)}")
-            if (granted) {
-                runT4RawHidProbe(device)
-            }
-        }
-
-        val devices = usbHidTransport.connectedDevices()
-        Log.i(TAG, "T2: connected USB devices = ${devices.size}")
-        for (device in devices) {
-            Log.i(TAG, "T2: device name=${device.deviceName} vid=${device.vendorId} pid=${device.productId} product=${device.productName} interfaceCount=${device.interfaceCount} hasPermission=${usbHidTransport.hasPermission(device)}")
-            if (usbHidTransport.hasPermission(device)) {
-                runT4RawHidProbe(device)
-            } else {
-                usbHidTransport.requestPermission(device)
+                DevicePickerDialog(devicePickerState)
             }
         }
     }
@@ -70,70 +120,41 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         usbPermissionReceiver?.let { unregisterReceiver(it) }
     }
+}
 
-    /**
-     * T4動作確認用: レポートディスクリプタ取得→Raw HIDインターフェース特定→claim→
-     * QMK/VIAの`id_get_protocol_version`(0x01)コマンド送受信を一気通貫で試す。
-     */
-    private fun runT4RawHidProbe(device: UsbDevice) {
-        val connection = usbHidTransport.openConnection(device)
-        if (connection == null) {
-            Log.e(TAG, "T4: openConnection failed")
-            return
+@Composable
+private fun DevicePickerDialog(state: DevicePickerState) {
+    val candidates = state.candidates ?: return
+    AlertDialog(
+        onDismissRequest = { state.resolve(null) },
+        title = { Text("キーボードを選択") },
+        text = {
+            androidx.compose.foundation.layout.Column {
+                candidates.forEach { device ->
+                    TextButton(onClick = { state.resolve(device) }) {
+                        Text(device.productName ?: "USB HID device (${device.vendorId}:${device.productId})")
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = { state.resolve(null) }) { Text("キャンセル") }
         }
-
-        // 先に全インターフェースをforce=trueでclaimし、カーネルのusbhidドライバをデタッチしてから
-        // GET_DESCRIPTORを投げる（クレーム前だと control transfer が失敗する現象を切り分け中）。
-        for (i in 0 until device.interfaceCount) {
-            val iface = device.getInterface(i)
-            val claimResult = UsbHidReportIo.claimInterface(connection, iface)
-            Log.i(TAG, "T4: pre-claim interface=${iface.id} result=$claimResult")
-        }
-
-        val descriptors = UsbHidReportIo.fetchAllReportDescriptors(device, connection)
-        Log.i(TAG, "T4: fetched report descriptors for interfaces=${descriptors.keys}")
-
-        val rawHidInterfaceNumber = RawHidInterfaceLocator.findRawHidInterfaceNumber(descriptors)
-        if (rawHidInterfaceNumber == null) {
-            Log.e(TAG, "T4: Raw HID interface not found among ${descriptors.keys}")
-            return
-        }
-        Log.i(TAG, "T4: Raw HID interface = $rawHidInterfaceNumber")
-
-        val usbInterface = UsbHidReportIo.findInterface(device, rawHidInterfaceNumber)
-        if (usbInterface == null) {
-            Log.e(TAG, "T4: UsbInterface not found for number=$rawHidInterfaceNumber")
-            return
-        }
-
-        val claimed = UsbHidReportIo.claimInterface(connection, usbInterface)
-        Log.i(TAG, "T4: claimInterface(force=true) result=$claimed")
-        if (!claimed) return
-
-        val outEndpoint = UsbHidReportIo.outEndpoint(usbInterface)
-        val inEndpoint = UsbHidReportIo.inEndpoint(usbInterface)
-        if (outEndpoint == null || inEndpoint == null) {
-            Log.e(TAG, "T4: missing endpoints out=$outEndpoint in=$inEndpoint")
-            return
-        }
-
-        // QMK/VIAプロトコル: id_get_protocol_version = 0x01。RAW_EPSIZE分をゼロ埋めして送る。
-        val report = ByteArray(outEndpoint.maxPacketSize)
-        report[0] = 0x01
-        val sent = UsbHidReportIo.sendReport(connection, outEndpoint, report)
-        Log.i(TAG, "T4: sendReport(id_get_protocol_version) bytesSent=$sent")
-
-        val response = UsbHidReportIo.receiveReport(connection, inEndpoint, inEndpoint.maxPacketSize)
-        Log.i(TAG, "T4: response=${response?.joinToString(" ") { "%02x".format(it) }}")
-    }
+    )
 }
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun UseviaWebView(modifier: Modifier = Modifier) {
+private fun UseviaWebView(
+    bridge: WebHidBridge,
+    onShowFileChooser: (ValueCallback<Array<Uri>>) -> Unit,
+    modifier: Modifier = Modifier
+) {
     AndroidView(
         modifier = modifier.fillMaxSize(),
         factory = { context ->
+            WebView.setWebContentsDebuggingEnabled(true)
             WebView(context).apply {
                 layoutParams = ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -142,6 +163,35 @@ private fun UseviaWebView(modifier: Modifier = Modifier) {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 webViewClient = WebViewClient()
+                webChromeClient = object : WebChromeClient() {
+                    override fun onShowFileChooser(
+                        view: WebView,
+                        filePathCallback: ValueCallback<Array<Uri>>,
+                        fileChooserParams: FileChooserParams
+                    ): Boolean {
+                        onShowFileChooser(filePathCallback)
+                        return true
+                    }
+                }
+
+                if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+                    WebViewCompat.addWebMessageListener(
+                        this,
+                        WebHidBridge.JS_OBJECT_NAME,
+                        setOf(USEVIA_ORIGIN),
+                        bridge
+                    )
+                } else {
+                    Log.e(TAG, "WEB_MESSAGE_LISTENER not supported by this WebView")
+                }
+
+                if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                    val polyfillJs = context.assets.open("webhid-polyfill.js").bufferedReader().use { it.readText() }
+                    WebViewCompat.addDocumentStartJavaScript(this, polyfillJs, setOf(USEVIA_ORIGIN))
+                } else {
+                    Log.e(TAG, "DOCUMENT_START_SCRIPT not supported by this WebView")
+                }
+
                 loadUrl(USEVIA_URL)
             }
         }

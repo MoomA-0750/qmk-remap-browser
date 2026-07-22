@@ -100,6 +100,17 @@
       });
     };
 
+    // 標準WebHIDの`forget()`はデバイスへの許可自体を取り消すAPI。V1ではOS側のUSB権限管理を
+    // 取り消す仕組みまでは実装しない（spec.md/plan.mdのスコープ外）ため、呼び出し側を
+    // 例外で落とさないよう即resolveする最小実装とする。
+    HIDDevice.prototype.forget = function () {
+      var self = this;
+      return Promise.resolve().then(function () {
+        self.opened = false;
+        openDevices.delete(self._deviceId);
+      });
+    };
+
     HIDDevice.prototype.sendReport = function (reportId, data) {
       return callNative('sendReport', {
         deviceId: this._deviceId,
@@ -144,6 +155,20 @@
       });
     };
 
+    // 標準WebHIDの`HID`は`EventTarget`を継承しており、`navigator.hid.addEventListener('connect'|'disconnect', ...)`
+    // が呼べることを前提にしたサイト側コードがある（usevia.appも初期化時に呼んでおり、
+    // 未実装だと`TypeError: navigator.hid.addEventListener is not a function`で例外になり
+    // ページの初期化そのものが止まる）。V1では実際のconnect/disconnectイベント発火までは
+    // 要件にないため（spec.md参照）、例外を起こさないよう登録だけ受け付ける最小実装とする。
+    var connectListeners = [];
+    var disconnectListeners = [];
+
+    function listenersFor(type) {
+      if (type === 'connect') return connectListeners;
+      if (type === 'disconnect') return disconnectListeners;
+      return null;
+    }
+
     var hid = {
       requestDevice: function (options) {
         return callNative('requestDevice', options || {}).then(function (descriptors) {
@@ -158,6 +183,16 @@
             return new HIDDevice(d);
           });
         });
+      },
+      addEventListener: function (type, listener) {
+        var list = listenersFor(type);
+        if (list) list.push(listener);
+      },
+      removeEventListener: function (type, listener) {
+        var list = listenersFor(type);
+        if (!list) return;
+        var idx = list.indexOf(listener);
+        if (idx >= 0) list.splice(idx, 1);
       }
     };
 
