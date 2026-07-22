@@ -1,5 +1,6 @@
 package com.moomatechnica.qmkremap.bridge
 
+import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbEndpoint
@@ -41,8 +42,18 @@ class WebHidNativeMethods(
 
     private fun permittedDeviceInfos(): List<UsbHidDeviceInfo> =
         transport.connectedDevices()
-            .filter { transport.hasPermission(it) }
+            .filter { transport.hasPermission(it) && it.hasHidInterface() }
             .map { it.toInfo() }
+
+    /**
+     * USBハブ自身など、HIDクラスのインターフェースを一つも持たないデバイスを除外するための判定。
+     * T7で「許可済みUSBデバイス全部」を候補にしていたため、USB-Cハブ経由で接続した際に
+     * ハブ自体がデバイス選択ダイアログの候補に混ざってしまう不具合があった（tasks.md参照）。
+     * `UsbInterface.interfaceClass`はUSB記述子から取得できる値でUSB通信不要のため、
+     * この絞り込み自体に`claimInterface`やレポートディスクリプタ取得は要らない。
+     */
+    private fun UsbDevice.hasHidInterface(): Boolean =
+        (0 until interfaceCount).any { getInterface(it).interfaceClass == UsbConstants.USB_CLASS_HID }
 
     private fun UsbDevice.toInfo() = UsbHidDeviceInfo(
         deviceId = deviceId,
