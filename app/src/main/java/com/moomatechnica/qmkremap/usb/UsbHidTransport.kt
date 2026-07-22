@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbManager
 import android.os.Build
 import android.util.Log
@@ -24,6 +25,8 @@ class UsbHidTransport(private val context: Context) {
     fun connectedDevices(): List<UsbDevice> = usbManager.deviceList.values.toList()
 
     fun hasPermission(device: UsbDevice): Boolean = usbManager.hasPermission(device)
+
+    fun openConnection(device: UsbDevice): UsbDeviceConnection? = usbManager.openDevice(device)
 
     fun requestPermission(device: UsbDevice) {
         val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
