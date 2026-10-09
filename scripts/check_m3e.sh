@@ -27,7 +27,7 @@ report 'material3 のワイルドカード import（検査をすり抜ける）'
 report '無印の部品 → 置き換え表を見る' \
   '^import androidx\.compose\.material3\.(CircularProgressIndicator|LinearProgressIndicator|NavigationBar|NavigationBarItem|NavigationRail|NavigationRailItem|BottomAppBar|MediumTopAppBar|LargeTopAppBar|ExtendedFloatingActionButton)$' 0
 report 'MaterialTheme(...) でテーマを張っている → MaterialExpressiveTheme' \
-  '(^|[^.A-Za-z])MaterialTheme[[:space:]]*\(' 0
+  '(^|[^.A-Za-z])MaterialTheme[[:space:]]*[({]' 0
 report 'tween / 自前の spring → MaterialTheme.motionScheme.*Spec()' \
   '(^|[^A-Za-z.])(tween|spring)[[:space:]]*[(<]' 0
 report '色の直書き → MaterialTheme.colorScheme' \
